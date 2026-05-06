@@ -1271,3 +1271,9 @@ func (b *bucket) NewMultiRangeDownloader(
 func (b *bucket) GCSName(obj *gcs.MinObject) string {
 	return obj.Name
 }
+
+func (b *bucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (listing *gcs.ListFoldersResponse, err error) {
+	// TODO: Implement method
+
+	return listing, err
+}

@@ -95,6 +95,12 @@ func (s *stallingStorageControlClient) CreateFolder(ctx context.Context, req *co
 	return s.wrapped.CreateFolder(ctx, req, opts...)
 }
 
+func (s *stallingStorageControlClient) ListFolders(ctx context.Context, req *controlpb.ListFoldersRequest, opts ...gax.CallOption) *control.FolderIterator {
+	// Iterator construction is non-blocking; stall semantics for this helper
+	// only meaningfully apply to per-call methods, not iterator constructors.
+	return s.wrapped.ListFolders(ctx, req, opts...)
+}
+
 type ControlClientRetryWrapperTest struct {
 	suite.Suite
 	// The raw mock client for setting expectations on return values.

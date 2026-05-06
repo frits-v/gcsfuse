@@ -220,6 +220,12 @@ func (d *dummyIOBucket) CreateFolder(ctx context.Context, folderName string) (*g
 	return d.wrapped.CreateFolder(ctx, folderName)
 }
 
+// ListFolders lists folders in a Hierarchical bucket.
+// Directly delegates to wrapped bucket.
+func (d *dummyIOBucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (*gcs.ListFoldersResponse, error) {
+	return d.wrapped.ListFolders(ctx, req)
+}
+
 // GCSName returns the original GCS name for the object.
 // Directly delegates to wrapped bucket.
 func (d *dummyIOBucket) GCSName(object *gcs.MinObject) string {

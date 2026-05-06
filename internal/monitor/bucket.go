@@ -211,6 +211,13 @@ func (mb *monitoringBucket) NewMultiRangeDownloader(
 	return
 }
 
+func (mb *monitoringBucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (listing *gcs.ListFoldersResponse, err error) {
+	startTime := time.Now()
+	listing, err = mb.wrapped.ListFolders(ctx, req)
+	recordRequest(ctx, mb.metricHandle, metrics.GcsMethodListFoldersAttr, startTime)
+	return
+}
+
 func (mb *monitoringBucket) GCSName(obj *gcs.MinObject) string {
 	return mb.wrapped.GCSName(obj)
 }

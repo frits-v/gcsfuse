@@ -396,6 +396,14 @@ func (b *debugBucket) NewMultiRangeDownloader(
 	return
 }
 
+func (b *debugBucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (listing *gcs.ListFoldersResponse, err error) {
+	id, desc, start := b.startRequest("ListFolders(%q)", req.Prefix)
+	defer b.finishRequest(id, desc, start, &err)
+
+	listing, err = b.wrapped.ListFolders(ctx, req)
+	return listing, err
+}
+
 func (b *debugBucket) GCSName(obj *gcs.MinObject) string {
 	return obj.Name
 }

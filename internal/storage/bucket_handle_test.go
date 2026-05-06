@@ -32,9 +32,34 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// fakeFolderIter is an in-memory folderIter for tests. It substitutes for a
+// real *control.FolderIterator, which can't be constructed externally because
+// its page-info plumbing uses unexported fields.
+type fakeFolderIter struct {
+	folders []*controlpb.Folder
+	idx     int
+	nextTok string
+	nextErr error
+}
+
+func (f *fakeFolderIter) Next() (*controlpb.Folder, error) {
+	if f.nextErr != nil {
+		return nil, f.nextErr
+	}
+	if f.idx >= len(f.folders) {
+		return nil, iterator.Done
+	}
+	out := f.folders[f.idx]
+	f.idx++
+	return out, nil
+}
+
+func (f *fakeFolderIter) NextToken() string { return f.nextTok }
 
 const missingObjectName string = "test/foo"
 const missingFolderName string = "missing"
@@ -1666,4 +1691,71 @@ func (testSuite *BucketHandleTest) TestCreateFolderWithGivenName() {
 	testSuite.mockClient.AssertExpectations(testSuite.T())
 	assert.NoError(testSuite.T(), err)
 	assert.Equal(testSuite.T(), gcs.GCSFolder(TestBucketName, &mockFolder), folder)
+}
+
+func TestCollectFolders_HappyPath(t *testing.T) {
+	iter := &fakeFolderIter{
+		folders: []*controlpb.Folder{
+			{Name: fmt.Sprintf(FullFolderPathHNS, TestBucketName, "alpha/")},
+			{Name: fmt.Sprintf(FullFolderPathHNS, TestBucketName, "beta/")},
+		},
+		nextTok: "page-token-2",
+	}
+
+	resp, err := collectFolders(iter, TestBucketName)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, 2, len(resp.Folders))
+	assert.Equal(t, "alpha/", resp.Folders[0].Name)
+	assert.Equal(t, "beta/", resp.Folders[1].Name)
+	assert.Equal(t, "page-token-2", resp.ContinuationToken)
+}
+
+func TestCollectFolders_EmptyIterator(t *testing.T) {
+	iter := &fakeFolderIter{folders: nil}
+
+	resp, err := collectFolders(iter, TestBucketName)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, 0, len(resp.Folders))
+	assert.Equal(t, "", resp.ContinuationToken)
+}
+
+func TestCollectFolders_PropagatesError(t *testing.T) {
+	iter := &fakeFolderIter{nextErr: errors.New("synthetic gRPC failure")}
+
+	resp, err := collectFolders(iter, TestBucketName)
+
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "synthetic gRPC failure")
+}
+
+func (testSuite *BucketHandleTest) TestListFolders_RequestsBucketScopedParent() {
+	ctx := context.Background()
+	createBucketHandle(testSuite, &controlpb.StorageLayout{
+		HierarchicalNamespace: &controlpb.StorageLayout_HierarchicalNamespace{Enabled: true},
+	})
+	expectedParent := fmt.Sprintf(FullBucketPathHNS, TestBucketName)
+	// Typed-nil iterator: the bucketHandle takes the empty-result early-return.
+	// Iteration logic itself is covered by TestCollectFolders_*.
+	testSuite.mockClient.On("ListFolders", ctx,
+		mock.MatchedBy(func(req *controlpb.ListFoldersRequest) bool {
+			return req.Parent == expectedParent && req.Prefix == "test-prefix/"
+		}),
+		mock.Anything,
+	).Return((*control.FolderIterator)(nil))
+	testSuite.bucketHandle.bucketType = &gcs.BucketType{Hierarchical: true}
+
+	resp, err := testSuite.bucketHandle.ListFolders(ctx, &gcs.ListFoldersRequest{
+		Prefix:   "test-prefix/",
+		PageSize: 100,
+	})
+
+	testSuite.mockClient.AssertExpectations(testSuite.T())
+	assert.NoError(testSuite.T(), err)
+	require.NotNil(testSuite.T(), resp)
+	assert.Equal(testSuite.T(), 0, len(resp.Folders))
 }

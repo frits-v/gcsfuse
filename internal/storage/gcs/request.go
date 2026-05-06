@@ -406,6 +406,23 @@ type Listing struct {
 	ContinuationToken string
 }
 
+// ListFoldersResponse contains a response from ListFolders API.
+type ListFoldersResponse struct {
+	// Records for list of folders matching the listing criteria.
+	Folders []*Folder
+
+	// A continuation token, for fetching more results.
+	//
+	// If non-empty, this listing does not represent the full set of matching
+	// folders in the bucket. Call ListFolders again with the request's
+	// ContinuationToken field set to this value to continue where you left off.
+	//
+	// Note that there is no guarantee of atomicity of listings. Folders written
+	// and deleted concurrently with a single or multiple listing requests may or
+	// may not be returned.
+	ContinuationToken string
+}
+
 // A request to update the metadata of an object, accepted by
 // Bucket.UpdateObject.
 type UpdateObjectRequest struct {
@@ -494,4 +511,30 @@ type CreateObjectChunkWriterRequest struct {
 	// Offset from where write has to start. Used only in case of appends flows.
 	// Default value is zero which means it's a new object write.
 	Offset int64
+}
+
+type ListFoldersRequest struct {
+	// Optional. Maximum number of folders to return in a single response. The
+	// service will use this parameter or 1,000 items, whichever is smaller.
+	PageSize int32
+
+	// Optional. A previously-returned page token representing part of the larger
+	// set of results to view.
+	PageToken string
+
+	// Optional. Filter results to folders whose names begin with this prefix.
+	// If set, the value must either be an empty string or end with a '/'.
+	Prefix string
+
+	// Optional. If set, returns results in a directory-like mode. The results
+	// will only include folders that either exactly match the above prefix, or
+	// are one level below the prefix. The only supported value is '/'.
+	//
+	// e.g. Given the following structure:
+	// A/B/c.txt
+	// A/B/d.txt
+	// X/Y/z.txt
+	// If we set Prefix = "A" and Delimiter = "/" in a file listing operation, it
+	// will list the folder "B" because it matches the prefix "A".
+	Delimiter string
 }

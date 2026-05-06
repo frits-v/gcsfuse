@@ -290,6 +290,19 @@ func (b *throttledBucket) CreateFolder(ctx context.Context, folderName string) (
 	return folder, err
 }
 
+func (b *throttledBucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (listing *gcs.ListFoldersResponse, err error) {
+	// Wait for permission to call through.
+	err = b.opThrottle.Wait(ctx, 1)
+	if err != nil {
+		return
+	}
+
+	// Call through.
+	listing, err = b.wrapped.ListFolders(ctx, req)
+
+	return listing, err
+}
+
 func (b *throttledBucket) NewMultiRangeDownloader(
 	ctx context.Context, req *gcs.MultiRangeDownloaderRequest) (mrd gcs.MultiRangeDownloader, err error) {
 	// Call through.

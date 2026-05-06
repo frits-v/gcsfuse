@@ -333,3 +333,13 @@ func (b *prefixBucket) NewMultiRangeDownloader(
 func (b *prefixBucket) GCSName(object *gcs.MinObject) string {
 	return b.wrappedName(b.wrapped.GCSName(object))
 }
+
+func (b *prefixBucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (listing *gcs.ListFoldersResponse, err error) {
+	// Modify the request and call through.
+	mReq := new(gcs.ListFoldersRequest)
+	*mReq = *req
+	mReq.Prefix = b.prefix + mReq.Prefix
+
+	o, err := b.wrapped.ListFolders(ctx, req)
+	return o, err
+}

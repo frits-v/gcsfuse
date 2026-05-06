@@ -88,6 +88,7 @@ const (
 	GcsMethodFinalizeUploadAttr               GcsMethod = "FinalizeUpload"
 	GcsMethodFlushPendingWritesAttr           GcsMethod = "FlushPendingWrites"
 	GcsMethodGetFolderAttr                    GcsMethod = "GetFolder"
+	GcsMethodListFoldersAttr                  GcsMethod = "ListFolders"
 	GcsMethodListObjectsAttr                  GcsMethod = "ListObjects"
 	GcsMethodMoveObjectAttr                   GcsMethod = "MoveObject"
 	GcsMethodMultiRangeDownloaderAddAttr      GcsMethod = "MultiRangeDownloader::Add"

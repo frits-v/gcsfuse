@@ -193,6 +193,12 @@ type Bucket interface {
 
 	CreateFolder(ctx context.Context, folderName string) (*Folder, error)
 
+	// List the folders in the Hierarchical bucket that meet the criteria defined by the
+	// request, returning a result folders that contains the results and
+	// potentially a cursor for retrieving the next portion of the larger set of
+	// results.
+	ListFolders(ctx context.Context, req *ListFoldersRequest) (*ListFoldersResponse, error)
+
 	// GCSName returns the original GCS name for the object.
 	//
 	// Some Bucket implementations modify the Name field of the MinObject before

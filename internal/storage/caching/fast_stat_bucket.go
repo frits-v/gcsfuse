@@ -640,3 +640,11 @@ func (b *fastStatBucket) NewMultiRangeDownloader(
 func (b *fastStatBucket) GCSName(obj *gcs.MinObject) string {
 	return b.wrapped.GCSName(obj)
 }
+
+func (b *fastStatBucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (listing *gcs.ListFoldersResponse, err error) {
+	listing, err = b.wrapped.ListFolders(ctx, req)
+
+	// TODO: Invalidate cache
+
+	return listing, err
+}

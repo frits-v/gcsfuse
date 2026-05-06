@@ -607,3 +607,29 @@ func (m *mockBucket) NewMultiRangeDownloader(
 
 	return
 }
+
+func (m *mockBucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (o0 *gcs.ListFoldersResponse, o1 error) {
+	// Get a file name and line number for the caller.
+	_, file, line, _ := runtime.Caller(1)
+
+	// Hand the call off to the controller, which does most of the work.
+	retVals := m.controller.HandleMethodCall(
+		m,
+		"ListFolders",
+		file,
+		line,
+		[]interface{}{})
+	if len(retVals) != 1 {
+		panic(fmt.Sprintf("mockBucket.ListFolders: invalid return values: %v", retVals))
+	}
+	// o0 string
+	if retVals[0] != nil {
+		o0 = retVals[0].(*gcs.ListFoldersResponse)
+	}
+
+	// o1 error
+	if retVals[1] != nil {
+		o1 = retVals[1].(error)
+	}
+	return
+}

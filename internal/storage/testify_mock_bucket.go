@@ -161,3 +161,11 @@ func (m *TestifyMockBucket) GCSName(obj *gcs.MinObject) string {
 	args := m.Called(obj)
 	return args.Get(0).(string)
 }
+
+func (m *TestifyMockBucket) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (*gcs.ListFoldersResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) != nil {
+		return args.Get(0).(*gcs.ListFoldersResponse), nil
+	}
+	return nil, args.Error(1)
+}

@@ -42,6 +42,8 @@ type StorageControlClient interface {
 	RenameFolder(ctx context.Context, req *controlpb.RenameFolderRequest, opts ...gax.CallOption) (*control.RenameFolderOperation, error)
 
 	CreateFolder(ctx context.Context, req *controlpb.CreateFolderRequest, opts ...gax.CallOption) (*controlpb.Folder, error)
+
+	ListFolders(ctx context.Context, req *controlpb.ListFoldersRequest, opts ...gax.CallOption) *control.FolderIterator
 }
 
 // storageControlClientWithBillingProject is a wrapper for an existing
@@ -79,6 +81,10 @@ func (sccwbp *storageControlClientWithBillingProject) RenameFolder(ctx context.C
 
 func (sccwbp *storageControlClientWithBillingProject) CreateFolder(ctx context.Context, req *controlpb.CreateFolderRequest, opts ...gax.CallOption) (*controlpb.Folder, error) {
 	return sccwbp.raw.CreateFolder(sccwbp.contextWithBillingProject(ctx), req, opts...)
+}
+
+func (sccwbp *storageControlClientWithBillingProject) ListFolders(ctx context.Context, req *controlpb.ListFoldersRequest, opts ...gax.CallOption) *control.FolderIterator {
+	return sccwbp.raw.ListFolders(sccwbp.contextWithBillingProject(ctx), req, opts...)
 }
 
 func withBillingProject(controlClient StorageControlClient, billingProject string) StorageControlClient {
@@ -176,6 +182,12 @@ func (sccwros *storageControlClientWithRetry) CreateFolder(ctx context.Context,
 	return storageutil.ExecuteWithRetry(ctx, sccwros.retryConfig, "CreateFolder", reqDescription, apiCall)
 }
 
+func (sccwros *storageControlClientWithRetry) ListFolders(ctx context.Context, req *controlpb.ListFoldersRequest, opts ...gax.CallOption) *control.FolderIterator {
+	// Iterator construction is non-blocking; per-page retries are handled by the
+	// gax CallOptions configured on the underlying client (rawControlClient.CallOptions.ListFolders).
+	return sccwros.raw.ListFolders(ctx, req, opts...)
+}
+
 // newRetryWrapper creates a new StorageControlClient with retry capabilities.
 // It accepts various parameters to configure the retry behavior.
 // The returned control client retries storage-layout.
@@ -242,6 +254,7 @@ func addGaxRetriesForFolderAPIs(rawControlClient *control.StorageControlClient,
 	gaxRetryOptions := storageControlClientGaxRetryOptions(clientConfig)
 	rawControlClient.CallOptions.RenameFolder = gaxRetryOptions
 	rawControlClient.CallOptions.GetFolder = gaxRetryOptions
+	rawControlClient.CallOptions.ListFolders = gaxRetryOptions
 	rawControlClient.CallOptions.CreateFolder = gaxRetryOptions
 	rawControlClient.CallOptions.DeleteFolder = gaxRetryOptions
 	return nil

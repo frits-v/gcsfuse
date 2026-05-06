@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	control "cloud.google.com/go/storage/control/apiv2"
 	"cloud.google.com/go/storage/control/apiv2/controlpb"
 	"github.com/googleapis/gax-go/v2"
 	"github.com/googlecloudplatform/gcsfuse/v3/internal/storage/gcs"
@@ -679,6 +680,66 @@ func (bh *bucketHandle) NewMultiRangeDownloader(
 
 func (bh *bucketHandle) GCSName(obj *gcs.MinObject) string {
 	return obj.Name
+}
+
+// folderIter is the subset of *control.FolderIterator that collectFolders
+// depends on. Defined narrowly so tests can substitute an in-memory fake;
+// the SDK's FolderIterator has unexported page-info fields that aren't
+// externally constructable.
+type folderIter interface {
+	Next() (*controlpb.Folder, error)
+	NextToken() string
+}
+
+func collectFolders(iter folderIter, bucketName string) (*gcs.ListFoldersResponse, error) {
+	var folders []*gcs.Folder
+	for {
+		f, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error iterating folders: %w", err)
+		}
+		folders = append(folders, gcs.GCSFolder(bucketName, f))
+	}
+	return &gcs.ListFoldersResponse{
+		Folders:           folders,
+		ContinuationToken: iter.NextToken(),
+	}, nil
+}
+
+// folderIteratorAdapter wraps a *control.FolderIterator to satisfy folderIter.
+// The SDK iterator exposes the next-page token via PageInfo().Token; this
+// adapter narrows the surface to what collectFolders consumes.
+type folderIteratorAdapter struct {
+	it *control.FolderIterator
+}
+
+func (a *folderIteratorAdapter) Next() (*controlpb.Folder, error) {
+	return a.it.Next()
+}
+
+func (a *folderIteratorAdapter) NextToken() string {
+	if a.it == nil || a.it.PageInfo() == nil {
+		return ""
+	}
+	return a.it.PageInfo().Token
+}
+
+func (bh *bucketHandle) ListFolders(ctx context.Context, req *gcs.ListFoldersRequest) (*gcs.ListFoldersResponse, error) {
+	cReq := &controlpb.ListFoldersRequest{
+		Parent:    fmt.Sprintf(FullBucketPathHNS, bh.bucketName),
+		Prefix:    req.Prefix,
+		PageSize:  req.PageSize,
+		PageToken: req.PageToken,
+		Delimiter: "/",
+	}
+	rawIter := bh.controlClient.ListFolders(ctx, cReq)
+	if rawIter == nil {
+		return &gcs.ListFoldersResponse{}, nil
+	}
+	return collectFolders(&folderIteratorAdapter{it: rawIter}, bh.bucketName)
 }
 
 func isStorageConditionsNotEmpty(conditions storage.Conditions) bool {
