@@ -552,6 +552,8 @@ type FileSystemConfig struct {
 	TempDir ResolvedPath `yaml:"temp-dir"`
 
 	Uid int64 `yaml:"uid"`
+
+	UseFoldersListForReaddir bool `yaml:"use-folders-list-for-readdir"`
 }
 
 type GcsAuthConfig struct {
@@ -1358,6 +1360,8 @@ func BuildFlagSet(flagSet *pflag.FlagSet) error {
 
 	flagSet.IntP("uid", "", -1, "UID owner of all inodes.")
 
+	flagSet.BoolP("use-folders-list-for-readdir", "", false, "On Hierarchical Namespace (HNS) buckets, route readdir through the Storage Control API's Folders.list instead of the standard Objects.list with delimiter. Collapses the per-directory round-trip cost on workloads that walk many directories. Default off; opt-in per mount.")
+
 	flagSet.BoolP("visualize-workload-insight", "", false, "A flag to enable workload visualization. When enabled, workload insights will include visualizations to help understand access patterns. Insights will be written to the file specified by --workload-insight-output-file.")
 
 	if err := flagSet.MarkHidden("visualize-workload-insight"); err != nil {
@@ -1958,6 +1962,10 @@ func BindFlags(v *viper.Viper, flagSet *pflag.FlagSet) error {
 	}
 
 	if err := v.BindPFlag("file-system.uid", flagSet.Lookup("uid")); err != nil {
+		return err
+	}
+
+	if err := v.BindPFlag("file-system.use-folders-list-for-readdir", flagSet.Lookup("use-folders-list-for-readdir")); err != nil {
 		return err
 	}
 

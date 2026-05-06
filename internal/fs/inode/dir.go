@@ -278,6 +278,10 @@ type dirInode struct {
 
 	isEnableTypeCacheDeprecation bool
 
+	// On HNS buckets, route readdir folder enumeration through the Storage
+	// Control API's Folders.list rather than Objects.list. Default false.
+	useFoldersListForReaddir bool
+
 	// Represents if folder has been unlinked in hierarchical bucket. This is not getting used in
 	// non-hierarchical bucket.
 	unlinked bool
@@ -350,6 +354,7 @@ func NewDirInode(
 		isStandardSymlinkRepresentationEnabled: cfg.EnableStandardSymlinks,
 		isUnsupportedPathSupportEnabled:        cfg.EnableUnsupportedPathSupport,
 		isEnableTypeCacheDeprecation:           cfg.EnableTypeCacheDeprecation,
+		useFoldersListForReaddir:               cfg.FileSystem.UseFoldersListForReaddir,
 		unlinked:                               false,
 		ctx:                                    ctx,
 		cancel:                                 cancel,
@@ -873,24 +878,33 @@ func (d *dirInode) listObjectsAndBuildCores(ctx context.Context, tok string, max
 		// folder resources and setting it to true causes perf issue (b/465295359)
 		includeTrailingDelimeter = false
 	}
-	// Ask the bucket to list some objects.
-	req := &gcs.ListObjectsRequest{
-		Delimiter:                "/",
-		IncludeTrailingDelimiter: includeTrailingDelimeter,
-		Prefix:                   d.Name().GcsObjectName(),
-		ContinuationToken:        tok,
-		MaxResults:               maxListCallResults,
-		// Setting Projection param to noAcl since fetching owner and acls are not
-		// required.
-		ProjectionVal:            gcs.NoAcl,
-		IncludeFoldersAsPrefixes: d.includeFoldersAsPrefixes,
-		StartOffset:              listStartOffset,
-	}
 
-	listing, err := d.bucket.ListObjects(ctx, req)
-	if err != nil {
-		err = fmt.Errorf("ListObjects: %w", err)
-		return
+	var listing *gcs.Listing
+	if d.useFoldersListForReaddir && d.isBucketHierarchical() {
+		listing, err = d.listFoldersAndFiles(ctx, tok, maxListCallResults, listStartOffset)
+		if err != nil {
+			return
+		}
+	} else {
+		// Ask the bucket to list some objects.
+		req := &gcs.ListObjectsRequest{
+			Delimiter:                "/",
+			IncludeTrailingDelimiter: includeTrailingDelimeter,
+			Prefix:                   d.Name().GcsObjectName(),
+			ContinuationToken:        tok,
+			MaxResults:               maxListCallResults,
+			// Setting Projection param to noAcl since fetching owner and acls are not
+			// required.
+			ProjectionVal:            gcs.NoAcl,
+			IncludeFoldersAsPrefixes: d.includeFoldersAsPrefixes,
+			StartOffset:              listStartOffset,
+		}
+
+		listing, err = d.bucket.ListObjects(ctx, req)
+		if err != nil {
+			err = fmt.Errorf("ListObjects: %w", err)
+			return
+		}
 	}
 
 	cores = make(map[Name]*Core)
@@ -983,6 +997,51 @@ func (d *dirInode) listObjectsAndBuildCores(ctx context.Context, tok string, max
 		logger.Warnf("Encountered unsupported prefixes during listing: %v", unsupportedPaths)
 	}
 	return
+}
+
+// listFoldersAndFiles synthesizes a *gcs.Listing from a Folders.list call
+// (folders go in CollapsedRuns) and a paired Objects.list call with
+// IncludeFoldersAsPrefixes=false (files go in MinObjects). The shape matches
+// what the surrounding readdir code expects from a single ListObjects.
+func (d *dirInode) listFoldersAndFiles(ctx context.Context, tok string, maxListCallResults int, listStartOffset string) (*gcs.Listing, error) {
+	prefix := d.Name().GcsObjectName()
+
+	folderReq := &gcs.ListFoldersRequest{
+		Prefix:    prefix,
+		PageSize:  int32(maxListCallResults),
+		PageToken: tok,
+	}
+	folderResp, err := d.bucket.ListFolders(ctx, folderReq)
+	if err != nil {
+		return nil, fmt.Errorf("ListFolders: %w", err)
+	}
+	if folderResp == nil {
+		folderResp = &gcs.ListFoldersResponse{}
+	}
+
+	objReq := &gcs.ListObjectsRequest{
+		Delimiter:                "/",
+		IncludeTrailingDelimiter: false,
+		Prefix:                   prefix,
+		MaxResults:               maxListCallResults,
+		ProjectionVal:            gcs.NoAcl,
+		IncludeFoldersAsPrefixes: false,
+		StartOffset:              listStartOffset,
+	}
+	objListing, err := d.bucket.ListObjects(ctx, objReq)
+	if err != nil {
+		return nil, fmt.Errorf("ListObjects (files-only): %w", err)
+	}
+
+	merged := &gcs.Listing{
+		MinObjects:        objListing.MinObjects,
+		CollapsedRuns:     make([]string, 0, len(folderResp.Folders)),
+		ContinuationToken: folderResp.ContinuationToken,
+	}
+	for _, f := range folderResp.Folders {
+		merged.CollapsedRuns = append(merged.CollapsedRuns, f.Name)
+	}
+	return merged, nil
 }
 
 // LOCKS_REQUIRED(d)

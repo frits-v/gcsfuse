@@ -569,6 +569,16 @@ params:
     default: -1
     usage: "UID owner of all inodes."
 
+  - config-path: "file-system.use-folders-list-for-readdir"
+    flag-name: "use-folders-list-for-readdir"
+    type: "bool"
+    usage: >-
+      On Hierarchical Namespace (HNS) buckets, route readdir through the
+      Storage Control API's Folders.list instead of the standard Objects.list
+      with delimiter. Collapses the per-directory round-trip cost on workloads
+      that walk many directories. Default off; opt-in per mount.
+    default: false
+
   - flag-name: "foreground"
     config-path: "foreground"
     type: "bool"

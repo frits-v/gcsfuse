@@ -984,3 +984,198 @@ func (t *HNSDirTest) TestLookUpChild_TypeCacheDeprecated_CacheHit() {
 	assert.Equal(t.T(), objName, entry.FullName.GcsObjectName())
 	t.mockBucket.AssertExpectations(t.T())
 }
+
+func (t *HNSDirTest) TestReadEntries_UsesListFoldersOnHNSWhenFlagOn() {
+	t.fixedTime.SetTime(time.Date(2024, 7, 22, 2, 15, 0, 0, time.Local))
+	t.config = &cfg.Config{
+		List:                         cfg.ListConfig{EnableEmptyManagedFolders: true},
+		MetadataCache:                cfg.MetadataCacheConfig{TypeCacheMaxSizeMb: 4},
+		EnableHns:                    true,
+		EnableUnsupportedPathSupport: true,
+		EnableTypeCacheDeprecation:   isTypeCacheDeprecationEnabled,
+		FileSystem: cfg.FileSystemConfig{
+			UseFoldersListForReaddir: true,
+		},
+	}
+	t.in.Unlock()
+	t.in = NewDirInode(
+		dirInodeID,
+		NewDirName(NewRootName(""), dirInodeName),
+		t.parInodeCtx,
+		fuseops.InodeAttributes{Uid: uid, Gid: gid, Mode: dirMode},
+		false,
+		false,
+		typeCacheTTL,
+		&t.bucket,
+		&t.fixedTime,
+		&t.fixedTime,
+		semaphore.NewWeighted(10),
+		t.config,
+	)
+	t.in.Lock()
+
+	const (
+		folder1 = "folder1"
+		folder2 = "folder2"
+		file1   = "file1"
+	)
+	folderResp := &gcs.ListFoldersResponse{
+		Folders: []*gcs.Folder{
+			{Name: path.Join(dirInodeName, folder1) + "/"},
+			{Name: path.Join(dirInodeName, folder2) + "/"},
+		},
+	}
+	fileListing := &gcs.Listing{
+		MinObjects: []*gcs.MinObject{
+			{Name: path.Join(dirInodeName, file1)},
+		},
+	}
+	t.mockBucket.On("ListFolders", mock.Anything, mock.MatchedBy(func(req *gcs.ListFoldersRequest) bool {
+		return req.Prefix == dirInodeName
+	})).Return(folderResp, nil).Maybe()
+	// Permissive ListObjects fallback so the v3.9.0 code path (which calls
+	// ListObjects with IncludeFoldersAsPrefixes=true) does not panic on the
+	// unmocked-call path. The post-impl path also issues a ListObjects call
+	// (with IncludeFoldersAsPrefixes=false) for non-folder entries; both
+	// shapes get handled here, with the later AssertCalled / AssertNotCalled
+	// gating the actual behavioral check.
+	t.mockBucket.On("ListObjects", mock.Anything, mock.MatchedBy(func(req *gcs.ListObjectsRequest) bool {
+		return req.Prefix == dirInodeName
+	})).Return(fileListing, nil).Maybe()
+
+	_, _, _, err := t.in.ReadEntries(t.ctx, "")
+
+	require.NoError(t.T(), err)
+	t.mockBucket.AssertCalled(t.T(), "ListFolders", mock.Anything, mock.Anything)
+	// The v3.9.0 path we are replacing calls ListObjects with
+	// IncludeFoldersAsPrefixes=true. Assert no such call landed.
+	t.mockBucket.AssertNotCalled(t.T(), "ListObjects", mock.Anything,
+		mock.MatchedBy(func(req *gcs.ListObjectsRequest) bool {
+			return req.IncludeFoldersAsPrefixes
+		}),
+	)
+}
+
+// reconfigureWithFolderListFlag rebuilds t.in with the file-system
+// flag toggled, since FileSystemConfig is consumed at NewDirInode time.
+func (t *hnsDirTest) reconfigureWithFolderListFlag(flag bool) {
+	t.config = &cfg.Config{
+		List:                         cfg.ListConfig{EnableEmptyManagedFolders: true},
+		MetadataCache:                cfg.MetadataCacheConfig{TypeCacheMaxSizeMb: 4},
+		EnableHns:                    true,
+		EnableUnsupportedPathSupport: true,
+		EnableTypeCacheDeprecation:   isTypeCacheDeprecationEnabled,
+		FileSystem:                   cfg.FileSystemConfig{UseFoldersListForReaddir: flag},
+	}
+	t.in.Unlock()
+	t.in = NewDirInode(
+		dirInodeID,
+		NewDirName(NewRootName(""), dirInodeName),
+		t.parInodeCtx,
+		fuseops.InodeAttributes{Uid: uid, Gid: gid, Mode: dirMode},
+		false,
+		false,
+		typeCacheTTL,
+		&t.bucket,
+		&t.fixedTime,
+		&t.fixedTime,
+		semaphore.NewWeighted(10),
+		t.config,
+	)
+	t.in.Lock()
+}
+
+func (t *HNSDirTest) TestReadEntries_FolderListPath_MixedDir_ReturnsFoldersAndFiles() {
+	t.fixedTime.SetTime(time.Date(2024, 7, 22, 2, 15, 0, 0, time.Local))
+	t.reconfigureWithFolderListFlag(true)
+
+	const (
+		folder1 = "f1"
+		folder2 = "f2"
+		file1   = "a.txt"
+		file2   = "b.txt"
+	)
+	folderResp := &gcs.ListFoldersResponse{
+		Folders: []*gcs.Folder{
+			{Name: path.Join(dirInodeName, folder1) + "/"},
+			{Name: path.Join(dirInodeName, folder2) + "/"},
+		},
+	}
+	fileListing := &gcs.Listing{
+		MinObjects: []*gcs.MinObject{
+			{Name: path.Join(dirInodeName, file1)},
+			{Name: path.Join(dirInodeName, file2)},
+		},
+	}
+	t.mockBucket.On("ListFolders", mock.Anything, mock.Anything).Return(folderResp, nil).Once()
+	t.mockBucket.On("ListObjects", mock.Anything, mock.MatchedBy(func(req *gcs.ListObjectsRequest) bool {
+		return !req.IncludeFoldersAsPrefixes
+	})).Return(fileListing, nil).Once()
+
+	entries, _, _, err := t.in.ReadEntries(t.ctx, "")
+
+	require.NoError(t.T(), err)
+	assert.Equal(t.T(), 4, len(entries))
+	names := map[string]fuseutil.DirentType{}
+	for _, e := range entries {
+		names[e.Name] = e.Type
+	}
+	assert.Equal(t.T(), fuseutil.DT_Directory, names[folder1])
+	assert.Equal(t.T(), fuseutil.DT_Directory, names[folder2])
+	assert.Equal(t.T(), fuseutil.DT_File, names[file1])
+	assert.Equal(t.T(), fuseutil.DT_File, names[file2])
+}
+
+func (t *HNSDirTest) TestReadEntries_FolderListPath_PropagatesContinuationToken() {
+	t.fixedTime.SetTime(time.Date(2024, 7, 22, 2, 15, 0, 0, time.Local))
+	t.reconfigureWithFolderListFlag(true)
+
+	folderResp := &gcs.ListFoldersResponse{
+		Folders:           []*gcs.Folder{{Name: path.Join(dirInodeName, "f1") + "/"}},
+		ContinuationToken: "next-page-tok-XYZ",
+	}
+	t.mockBucket.On("ListFolders", mock.Anything, mock.Anything).Return(folderResp, nil).Once()
+	t.mockBucket.On("ListObjects", mock.Anything, mock.Anything).Return(&gcs.Listing{}, nil).Maybe()
+
+	_, _, newTok, err := t.in.ReadEntries(t.ctx, "")
+
+	require.NoError(t.T(), err)
+	assert.Equal(t.T(), "next-page-tok-XYZ", newTok)
+}
+
+// readdir must tolerate a bucket impl returning (nil response, nil error)
+// from ListFolders. Without this guard the merge step nil-derefs.
+func (t *HNSDirTest) TestReadEntries_FolderListPath_NilUpstreamResponse_DoesNotPanic() {
+	t.fixedTime.SetTime(time.Date(2024, 7, 22, 2, 15, 0, 0, time.Local))
+	t.reconfigureWithFolderListFlag(true)
+
+	t.mockBucket.On("ListFolders", mock.Anything, mock.Anything).
+		Return((*gcs.ListFoldersResponse)(nil), nil).Once()
+	t.mockBucket.On("ListObjects", mock.Anything, mock.Anything).
+		Return(&gcs.Listing{}, nil).Maybe()
+
+	require.NotPanics(t.T(), func() {
+		_, _, _, _ = t.in.ReadEntries(t.ctx, "")
+	})
+}
+
+// Default-off safety: with the flag unset, the existing ListObjects path
+// is taken and ListFolders is never called.
+func (t *HNSDirTest) TestReadEntries_FolderListPath_FlagOff_FallsThroughToListObjects() {
+	t.fixedTime.SetTime(time.Date(2024, 7, 22, 2, 15, 0, 0, time.Local))
+	t.reconfigureWithFolderListFlag(false)
+
+	listing := &gcs.Listing{
+		MinObjects:    []*gcs.MinObject{{Name: path.Join(dirInodeName, "file1")}},
+		CollapsedRuns: []string{path.Join(dirInodeName, "folder1") + "/"},
+	}
+	// v3.9.0 path: a single ListObjects with IncludeFoldersAsPrefixes=true.
+	t.mockBucket.On("ListObjects", mock.Anything, mock.MatchedBy(func(req *gcs.ListObjectsRequest) bool {
+		return req.IncludeFoldersAsPrefixes
+	})).Return(listing, nil).Once()
+
+	_, _, _, err := t.in.ReadEntries(t.ctx, "")
+
+	require.NoError(t.T(), err)
+	t.mockBucket.AssertNotCalled(t.T(), "ListFolders", mock.Anything, mock.Anything)
+}
